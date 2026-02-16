@@ -1,9 +1,9 @@
-name: R
+name: pre
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 16 13 2 *'
+  # schedule:
+  #   - cron: '0 16 13 2 *'
 
 
 env:
@@ -19,6 +19,7 @@ jobs:
           fetch-depth: 1
           sparse-checkout: |
             cache/1.txt
+            cache_preseason/1.txt
             requirements.txt
             preseason.py            
             utils.py
@@ -80,3 +81,4 @@ jobs:
         env:
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

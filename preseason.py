@@ -66,11 +66,25 @@ logger = logging.getLogger("preseason_extractor")
 logging.getLogger("fastf1").setLevel(logging.WARNING)
 logging.getLogger("fastf1").propagate = False
 
+_MISSING_TEXT_VALUES = {
+    "",
+    "null",
+    "nan",
+    "nat",
+    "none",
+    "inf",
+    "-inf",
+    "infinity",
+    "-infinity",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helper Functions (Copied from main_optimized.py for standalone execution)
 # ---------------------------------------------------------------------------
-def _write_json(path: str, obj) -> None:
+def _write_json(path: str, obj, normalize_missing: bool = False) -> None:
+    if normalize_missing:
+        obj = _normalize_missing_for_json(obj)
     with open(path, "wb") as f:
         f.write(orjson.dumps(obj, option=ORJSON_OPTS))
 
@@ -97,7 +111,11 @@ def _col_to_list_str_or_none(col) -> list:
     mask = pd.isna(vals)
     out = np.empty(vals.shape, dtype=object)
     out[mask] = "None"
-    out[~mask] = vals[~mask].astype(str)
+    valid_vals = vals[~mask]
+    s_vals = np.array([str(v).strip().lower() for v in valid_vals])
+    missing_mask = np.isin(s_vals, list(_MISSING_TEXT_VALUES))
+    str_vals = np.array([str(v) for v in valid_vals])
+    out[~mask] = np.where(missing_mask, "None", str_vals)
     return out.tolist()
 
 
@@ -121,6 +139,154 @@ def _col_to_list_bool_or_none(series: pd.Series) -> list:
     out[mask] = "None"
     out[~mask] = vals[~mask].astype(bool)
     return out.tolist()
+
+
+def _series_to_json_list(series: pd.Series) -> list:
+    if series.empty:
+        return []
+
+    if pd.api.types.is_timedelta64_dtype(series.dtype):
+        return _td_col_to_seconds(series)
+
+    vals = series.to_numpy()
+    if pd.api.types.is_float_dtype(series.dtype):
+        vals_f = vals.astype(np.float64, copy=False)
+        mask = ~np.isfinite(vals_f)
+    else:
+        mask = pd.isna(vals)
+    out = np.empty(vals.shape, dtype=object)
+    out[mask] = "None"
+
+    valid = ~mask
+    if not valid.any():
+        return out.tolist()
+
+    if pd.api.types.is_bool_dtype(series.dtype):
+        out[valid] = vals[valid].astype(bool)
+    elif pd.api.types.is_integer_dtype(series.dtype):
+        out[valid] = vals[valid].astype(int)
+    elif pd.api.types.is_float_dtype(series.dtype):
+        out[valid] = vals[valid].astype(float)
+    else:
+        valid_vals = vals[valid]
+        s_vals = np.array([str(v).strip().lower() for v in valid_vals])
+        missing_mask = np.isin(s_vals, list(_MISSING_TEXT_VALUES))
+        str_vals = np.array([str(v) for v in valid_vals])
+        out[valid] = np.where(missing_mask, "None", str_vals)
+
+    return out.tolist()
+
+
+def _scalar_to_json_primitive_or_none(value):
+    if isinstance(value, (float, np.floating)):
+        return "None" if not np.isfinite(value) else float(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, str):
+        return "None" if value.strip().lower() in _MISSING_TEXT_VALUES else value
+    if pd.isna(value):
+        return "None"
+    return value
+
+
+def _normalize_missing_for_json(value):
+    if isinstance(value, dict):
+        return {k: _normalize_missing_for_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_missing_for_json(v) for v in value]
+    if isinstance(value, tuple):
+        return [_normalize_missing_for_json(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return [_normalize_missing_for_json(v) for v in value.tolist()]
+    return _scalar_to_json_primitive_or_none(value)
+
+
+def _dataframe_to_column_lists(df: pd.DataFrame) -> Dict[str, list]:
+    if df is None or df.empty:
+        return {}
+    return {col: _series_to_json_list(df[col]) for col in df.columns}
+
+
+_LAP_WEATHER_COL_MAP = (
+    ("wT", "Time"),
+    ("wAT", "AirTemp"),
+    ("wH", "Humidity"),
+    ("wP", "Pressure"),
+    ("wR", "Rainfall"),
+    ("wTT", "TrackTemp"),
+    ("wWD", "WindDirection"),
+    ("wWS", "WindSpeed"),
+)
+LAP_WEATHER_KEYS = tuple(k for k, _ in _LAP_WEATHER_COL_MAP)
+
+_RCM_COL_MAP = (
+    ("time", "Time"),
+    ("cat", "Category"),
+    ("msg", "Message"),
+    ("status", "Status"),
+    ("flag", "Flag"),
+    ("scope", "Scope"),
+    ("sector", "Sector"),
+    ("dNum", "RacingNumber"),
+    ("lap", "Lap"),
+)
+
+
+def _session_weather_to_column_lists(weather_df: pd.DataFrame) -> Dict[str, list]:
+    if weather_df is None or weather_df.empty:
+        return {}
+
+    out: Dict[str, list] = {}
+    for short_key, weather_col in _LAP_WEATHER_COL_MAP:
+        if weather_col in weather_df.columns:
+            out[short_key] = _series_to_json_list(weather_df[weather_col])
+    return out
+
+
+def _session_rcm_to_column_lists(rcm_df: pd.DataFrame) -> Dict[str, list]:
+    if rcm_df is None or rcm_df.empty:
+        return {}
+
+    out: Dict[str, list] = {}
+    for short_key, rcm_col in _RCM_COL_MAP:
+        if rcm_col in rcm_df.columns:
+            out[short_key] = _series_to_json_list(rcm_df[rcm_col])
+    return out
+
+
+def _lap_weather_to_column_lists(laps: pd.DataFrame, weather_df: pd.DataFrame = None) -> Dict[str, list]:
+    n_laps = len(laps)
+    if n_laps == 0:
+        return {k: [] for k in LAP_WEATHER_KEYS}
+
+    none_row = ["None"] * n_laps
+    out = {k: none_row.copy() for k in LAP_WEATHER_KEYS}
+
+    if weather_df is None:
+        if not hasattr(laps, "get_weather_data"):
+            return out
+        try:
+            weather_df = laps.get_weather_data()
+        except Exception:
+            return out
+
+    if weather_df is None:
+        return out
+
+    for short_key, weather_col in _LAP_WEATHER_COL_MAP:
+        if weather_col not in weather_df.columns:
+            continue
+
+        values = _series_to_json_list(weather_df[weather_col])
+        if len(values) < n_laps:
+            values.extend(["None"] * (n_laps - len(values)))
+        elif len(values) > n_laps:
+            values = values[:n_laps]
+        out[short_key] = values
+
+    return out
 
 
 def _array_to_list_float_or_none(arr: np.ndarray) -> list:
@@ -374,9 +540,32 @@ class PreSeasonExtractor:
         try:
             f1session = self.get_session(test_number, session_number)
             laps = f1session.laps
-            driver_team = laps.drop_duplicates(subset="Driver")[["Driver", "Team"]]
+            driver_cols = ["Driver", "Team"]
+            has_driver_number = "DriverNumber" in laps.columns
+            if has_driver_number:
+                driver_cols.append("DriverNumber")
+            driver_team = laps.drop_duplicates(subset="Driver")[driver_cols]
+
+            results = f1session.results
+            result_by_abbr = {}
+            result_by_number = {}
+            if results is not None and not results.empty:
+                for row in results.itertuples():
+                    abbr = getattr(row, "Abbreviation", None)
+                    if pd.notna(abbr):
+                        result_by_abbr[str(abbr)] = row
+
+                    driver_number = getattr(row, "DriverNumber", None)
+                    if pd.notna(driver_number):
+                        result_by_number[str(driver_number)] = row
+
             drivers = [
-                {"driver": row.Driver, "team": row.Team}
+                self._build_driver_info(
+                    row=row,
+                    has_driver_number=has_driver_number,
+                    result_by_abbr=result_by_abbr,
+                    result_by_number=result_by_number,
+                )
                 for row in driver_team.itertuples(index=False)
             ]
             return {"drivers": drivers}
@@ -386,19 +575,72 @@ class PreSeasonExtractor:
             )
             return {"drivers": []}
 
+    def _build_driver_info(
+        self,
+        row,
+        has_driver_number: bool,
+        result_by_abbr: Dict[str, object],
+        result_by_number: Dict[str, object],
+    ) -> Dict[str, str]:
+        driver = _scalar_to_json_primitive_or_none(row.Driver)
+        team = _scalar_to_json_primitive_or_none(row.Team)
+        driver_number = _scalar_to_json_primitive_or_none(
+            row.DriverNumber if has_driver_number else "None"
+        )
+
+        result_row = result_by_abbr.get(str(driver))
+        if result_row is None and driver_number != "None":
+            result_row = result_by_number.get(str(driver_number))
+
+        first_name = "None"
+        last_name = "None"
+        team_color = "None"
+        headshot_url = "None"
+
+        if result_row is not None:
+            first_name = _scalar_to_json_primitive_or_none(
+                getattr(result_row, "FirstName", "None")
+            )
+            last_name = _scalar_to_json_primitive_or_none(
+                getattr(result_row, "LastName", "None")
+            )
+            team_color = _scalar_to_json_primitive_or_none(
+                getattr(result_row, "TeamColor", "None")
+            )
+            headshot_url = _scalar_to_json_primitive_or_none(
+                getattr(
+                    result_row,
+                    "HeadshotUrl",
+                    getattr(result_row, "HeadShotUrl", "None"),
+                )
+            )
+
+        return {
+            "driver": driver,
+            "team": team,
+            "dn": driver_number,
+            "fn": first_name,
+            "ln": last_name,
+            "tc": team_color,
+            "url": headshot_url,
+        }
+
     def laps_data(
         self,
         driver: str,
         f1session: fastf1.core.Session,
         driver_laps: pd.DataFrame = None,
+        session_weather_df: pd.DataFrame = None,
     ) -> Dict[str, list]:
         try:
             if driver_laps is None:
                 driver_laps = f1session.laps.pick_drivers(driver)
 
+            lap_weather = _lap_weather_to_column_lists(driver_laps, session_weather_df)
+
             return {
                 "time": _td_col_to_seconds(driver_laps["LapTime"]),
-                "lap": driver_laps["LapNumber"].tolist(),
+                "lap": _col_to_list_int_or_none(driver_laps["LapNumber"]),
                 "compound": _col_to_list_str_or_none(driver_laps["Compound"]),
                 "stint": _col_to_list_int_or_none(driver_laps["Stint"]),
                 "s1": _td_col_to_seconds(driver_laps["Sector1Time"]),
@@ -408,6 +650,28 @@ class PreSeasonExtractor:
                 "pos": _col_to_list_int_or_none(driver_laps["Position"]),
                 "status": _col_to_list_str_or_none(driver_laps["TrackStatus"]),
                 "pb": _col_to_list_bool_or_none(driver_laps["IsPersonalBest"]),
+                # Additional FastF1 lap columns with shortened names
+                "sesT": _td_col_to_seconds(driver_laps["Time"]),
+                "drv": _col_to_list_str_or_none(driver_laps["Driver"]),
+                "dNum": _col_to_list_str_or_none(driver_laps["DriverNumber"]),
+                "pout": _td_col_to_seconds(driver_laps["PitOutTime"]),
+                "pin": _td_col_to_seconds(driver_laps["PitInTime"]),
+                "s1T": _td_col_to_seconds(driver_laps["Sector1SessionTime"]),
+                "s2T": _td_col_to_seconds(driver_laps["Sector2SessionTime"]),
+                "s3T": _td_col_to_seconds(driver_laps["Sector3SessionTime"]),
+                "vi1": _array_to_list_float_or_none(driver_laps["SpeedI1"].to_numpy()),
+                "vi2": _array_to_list_float_or_none(driver_laps["SpeedI2"].to_numpy()),
+                "vfl": _array_to_list_float_or_none(driver_laps["SpeedFL"].to_numpy()),
+                "vst": _array_to_list_float_or_none(driver_laps["SpeedST"].to_numpy()),
+                "fresh": _col_to_list_bool_or_none(driver_laps["FreshTyre"]),
+                "team": _col_to_list_str_or_none(driver_laps["Team"]),
+                "lST": _td_col_to_seconds(driver_laps["LapStartTime"]),
+                "lSD": _col_to_list_str_or_none(driver_laps["LapStartDate"]),
+                "del": _col_to_list_bool_or_none(driver_laps["Deleted"]),
+                "delR": _col_to_list_str_or_none(driver_laps["DeletedReason"]),
+                "ff1G": _col_to_list_bool_or_none(driver_laps["FastF1Generated"]),
+                "iacc": _col_to_list_bool_or_none(driver_laps["IsAccurate"]),
+                **lap_weather,
             }
         except Exception as e:
             logger.error(f"Error getting lap data for {driver}: {e}")
@@ -416,6 +680,11 @@ class PreSeasonExtractor:
                 for k in (
                     "time", "lap", "compound", "stint",
                     "s1", "s2", "s3", "life", "pos", "status", "pb",
+                    "sesT", "drv", "dNum", "pout", "pin",
+                    "s1T", "s2T", "s3T", "vi1", "vi2",
+                    "vfl", "vst", "fresh", "team", "lST",
+                    "lSD", "del", "delR", "ff1G", "iacc",
+                    *LAP_WEATHER_KEYS,
                 )
             }
 
@@ -434,12 +703,12 @@ class PreSeasonExtractor:
                 circuit_info = f1session.get_circuit_info()
                 corners = circuit_info.corners
                 result = {
-                    "CornerNumber": corners["Number"].tolist(),
-                    "X": corners["X"].tolist(),
-                    "Y": corners["Y"].tolist(),
-                    "Angle": corners["Angle"].tolist(),
-                    "Distance": corners["Distance"].tolist(),
-                    "Rotation": circuit_info.rotation,
+                    "CornerNumber": _series_to_json_list(corners["Number"]),
+                    "X": _series_to_json_list(corners["X"]),
+                    "Y": _series_to_json_list(corners["Y"]),
+                    "Angle": _series_to_json_list(corners["Angle"]),
+                    "Distance": _series_to_json_list(corners["Distance"]),
+                    "Rotation": _scalar_to_json_primitive_or_none(circuit_info.rotation),
                 }
                 self._circuit_cache[cache_key] = result
                 return result
@@ -447,12 +716,12 @@ class PreSeasonExtractor:
                 circuit_df, rotation = self._get_circuit_info_from_api(circuit_key)
                 if circuit_df is not None:
                     result = {
-                        "CornerNumber": circuit_df["Number"].tolist(),
-                        "X": circuit_df["X"].tolist(),
-                        "Y": circuit_df["Y"].tolist(),
-                        "Angle": circuit_df["Angle"].tolist(),
-                        "Distance": (circuit_df["Distance"] / 10).tolist(),
-                        "Rotation": rotation,
+                        "CornerNumber": _series_to_json_list(circuit_df["Number"]),
+                        "X": _series_to_json_list(circuit_df["X"]),
+                        "Y": _series_to_json_list(circuit_df["Y"]),
+                        "Angle": _series_to_json_list(circuit_df["Angle"]),
+                        "Distance": _series_to_json_list(circuit_df["Distance"] / 10),
+                        "Rotation": _scalar_to_json_primitive_or_none(rotation),
                     }
                     self._circuit_cache[cache_key] = result
                     return result
@@ -539,6 +808,7 @@ class PreSeasonExtractor:
         driver: str,
         base_dir: str,
         f1session: fastf1.core.Session = None,
+        session_weather_df: pd.DataFrame = None,
     ) -> None:
         driver_dir = f"{base_dir}/{driver}"
         os.makedirs(driver_dir, exist_ok=True)
@@ -554,7 +824,7 @@ class PreSeasonExtractor:
                 LapNumber=driver_laps["LapNumber"].astype(int)
             )
 
-            laptimes = self.laps_data(driver, f1session, driver_laps)
+            laptimes = self.laps_data(driver, f1session, driver_laps, session_weather_df)
             _write_json(f"{driver_dir}/laptimes.json", laptimes)
 
             lap_numbers = driver_laps["LapNumber"].tolist()
@@ -595,6 +865,18 @@ class PreSeasonExtractor:
                 test_number, session_number, load_telemetry=True
             )
 
+            weather_data = _session_weather_to_column_lists(f1session.weather_data)
+            _write_json(
+                f"{base_dir}/weather.json", weather_data, normalize_missing=True
+            )
+
+            race_control_messages = _session_rcm_to_column_lists(
+                f1session.race_control_messages
+            )
+            _write_json(
+                f"{base_dir}/rcm.json", race_control_messages, normalize_missing=True
+            )
+
             drivers_info = self.session_drivers(test_number, session_number)
             _write_json(f"{base_dir}/drivers.json", drivers_info)
 
@@ -608,13 +890,19 @@ class PreSeasonExtractor:
                 logger.warning(f"No drivers found for {label}")
                 return
 
-            # Process drivers sequentially for stability and lowest memory overhead
-            # (Benchmarks showed sequential is faster than parallel for single-session extraction)
+            session_weather_df = None
+            if hasattr(f1session.laps, "get_weather_data"):
+                try:
+                    session_weather_df = f1session.laps.get_weather_data()
+                except Exception:
+                    pass
+
             total_drivers = len(drivers)
             for i, driver in enumerate(drivers, 1):
                 logger.info(f"Processing driver {driver} ({i}/{total_drivers})")
                 self.process_driver(
-                    test_number, session_number, driver, base_dir, f1session
+                    test_number, session_number, driver, base_dir, f1session,
+                    session_weather_df,
                 )
 
 
@@ -631,7 +919,6 @@ class PreSeasonExtractor:
             return
 
         for evt in events:
-            test_num = evt["test_number"]
             test_num = evt["test_number"]
 
             if TARGET_TEST_NUMBER is not None and test_num != TARGET_TEST_NUMBER:

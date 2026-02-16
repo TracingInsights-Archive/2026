@@ -1,4 +1,4 @@
-name: pre
+name: FP2
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ jobs:
             cache/1.txt
             cache_preseason/1.txt
             requirements.txt
-            preseason.py            
+            FP2.py            
             utils.py
           sparse-checkout-cone-mode: false    
       - name: Set up Python
@@ -45,7 +45,7 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Run Telemetry Extraction
-        run: python preseason.py
+        run: python FP2.py
         env:
           GITHUB_ACTIONS: "true"
 

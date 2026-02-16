@@ -1,15 +1,3 @@
-"""
-Pre-Season Testing Telemetry Extraction Script
-================================================
-Extracts telemetry data from F1 pre-season testing sessions.
-
-Key differences from main_optimized.py (race weekends):
-- Uses fastf1.get_testing_session(year, test_number, session_number)
-- Uses fastf1.get_event_schedule(year, include_testing=True)
-- Output directory:  {year}/Pre-Season Testing/Test {N}/Day {M}/
-- Standalone: Use "cache_preseason" to avoid conflicts with main script
-"""
-
 import gc
 import logging
 import os
@@ -49,10 +37,10 @@ fastf1._api.make_path = _patched_make_path
 DEFAULT_YEAR = 2026
 # Set these to an integer (e.g. 1) to filter, or None to process all
 TARGET_TEST_NUMBER = 1      # e.g. 1 for "Test 1"
-TARGET_SESSION_NUMBER = 3  # e.g. 1 for "Practice 1"
+TARGET_SESSION_NUMBER = 1   # e.g. 1 for "Practice 1"
 
 # Deprecated but kept for compatibility if needed (though now unused by logic)
-SESSION_NUMBER = 3
+SESSION_NUMBER = 1
 PROTO = "https"
 HOST = "api.multiviewer.app"
 HEADERS = {"User-Agent": "FastF1/"}
@@ -97,10 +85,15 @@ def _td_col_to_seconds(series: pd.Series) -> list:
     return out.tolist()
 
 
-def _col_to_list_str_or_none(series: pd.Series) -> list:
-    if series.empty:
+def _col_to_list_str_or_none(col) -> list:
+    if isinstance(col, np.ndarray):
+        vals = col
+    else:
+        if col.empty:
+            return []
+        vals = col.to_numpy()
+    if len(vals) == 0:
         return []
-    vals = series.to_numpy()
     mask = pd.isna(vals)
     out = np.empty(vals.shape, dtype=object)
     out[mask] = "None"
@@ -232,8 +225,18 @@ def _process_telemetry_to_dict(telemetry: pd.DataFrame, data_key: str) -> dict:
     ax, ay, az, time_s = _compute_accelerations(speed, time_arr, x, y, z, dist)
 
     drs_raw = telemetry["DRS"].to_numpy()
-    drs = ((drs_raw == 10) | (drs_raw == 12) | (drs_raw == 14)).astype(np.int8)
+    drs = np.isin(drs_raw, [10, 12, 14]).astype(np.int8)
     brake = telemetry["Brake"].to_numpy().astype(bool).astype(np.int8)
+    driver_ahead = (
+        telemetry["DriverAhead"]
+        if "DriverAhead" in telemetry.columns
+        else np.full(len(telemetry), np.nan)
+    )
+    distance_to_driver_ahead = (
+        telemetry["DistanceToDriverAhead"].to_numpy()
+        if "DistanceToDriverAhead" in telemetry.columns
+        else np.full(len(telemetry), np.nan, dtype=np.float64)
+    )
 
     return {
         "tel": {
@@ -247,6 +250,12 @@ def _process_telemetry_to_dict(telemetry: pd.DataFrame, data_key: str) -> dict:
             "distance": _array_to_list_float_or_none(dist),
             "rel_distance": _array_to_list_float_or_none(
                 telemetry["RelativeDistance"].to_numpy()
+                if "RelativeDistance" in telemetry.columns
+                else np.full(len(telemetry), np.nan, dtype=np.float64)
+            ),
+            "DriverAhead": _col_to_list_str_or_none(driver_ahead),
+            "DistanceToDriverAhead": _array_to_list_float_or_none(
+                distance_to_driver_ahead
             ),
             "acc_x": _array_to_list_float_or_none(ax),
             "acc_y": _array_to_list_float_or_none(ay),
@@ -757,4 +766,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

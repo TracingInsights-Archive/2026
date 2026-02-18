@@ -39,7 +39,7 @@ fastf1._api.make_path = _patched_make_path
 
 DEFAULT_YEAR = 2026
 # Set these to an integer (e.g. 1) to filter, or None to process all
-TARGET_TEST_NUMBER = 1  # e.g. 1 for "Test 1"
+TARGET_TEST_NUMBER = 2  # e.g. 1 for "Test 1"
 TARGET_SESSION_NUMBER = 1  # e.g. 1 for "Practice 1"
 
 # Deprecated but kept for compatibility if needed (though now unused by logic)
@@ -1089,6 +1089,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

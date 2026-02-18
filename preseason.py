@@ -5,17 +5,19 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import fastf1
+
+# ---------------------------------------------------------------------------
+# Monkeypatch: Fix FastF1 2026 Pre-Season Path (Day N vs Practice N)
+# ---------------------------------------------------------------------------
+import fastf1._api
 import numpy as np
 import orjson
 import pandas as pd
 import psutil
 import requests
 
-# ---------------------------------------------------------------------------
-# Monkeypatch: Fix FastF1 2026 Pre-Season Path (Day N vs Practice N)
-# ---------------------------------------------------------------------------
-import fastf1._api
 _original_make_path = fastf1._api.make_path
+
 
 def _patched_make_path(wname, wdate, sname, sdate):
     path = _original_make_path(wname, wdate, sname, sdate)
@@ -28,6 +30,7 @@ def _patched_make_path(wname, wdate, sname, sdate):
             path = path.replace("Practice_3", "Day_3")
     return path
 
+
 fastf1._api.make_path = _patched_make_path
 
 # ---------------------------------------------------------------------------
@@ -36,8 +39,8 @@ fastf1._api.make_path = _patched_make_path
 
 DEFAULT_YEAR = 2026
 # Set these to an integer (e.g. 1) to filter, or None to process all
-TARGET_TEST_NUMBER = 1      # e.g. 1 for "Test 1"
-TARGET_SESSION_NUMBER = 3   # e.g. 1 for "Practice 1"
+TARGET_TEST_NUMBER = 1  # e.g. 1 for "Test 1"
+TARGET_SESSION_NUMBER = 3  # e.g. 1 for "Practice 1"
 
 # Deprecated but kept for compatibility if needed (though now unused by logic)
 SESSION_NUMBER = 3
@@ -256,7 +259,9 @@ def _session_rcm_to_column_lists(rcm_df: pd.DataFrame) -> Dict[str, list]:
     return out
 
 
-def _lap_weather_to_column_lists(laps: pd.DataFrame, weather_df: pd.DataFrame = None) -> Dict[str, list]:
+def _lap_weather_to_column_lists(
+    laps: pd.DataFrame, weather_df: pd.DataFrame = None
+) -> Dict[str, list]:
     n_laps = len(laps)
     if n_laps == 0:
         return {k: [] for k in LAP_WEATHER_KEYS}
@@ -498,11 +503,13 @@ class PreSeasonExtractor:
                     val = row[col]
                     if pd.notna(val) and str(val).strip() not in ("", "None"):
                         n_sessions += 1
-            events.append({
-                "test_number": idx,
-                "event_name": row.get("EventName", f"Test {idx}"),
-                "sessions": max(n_sessions, 1),
-            })
+            events.append(
+                {
+                    "test_number": idx,
+                    "event_name": row.get("EventName", f"Test {idx}"),
+                    "sessions": max(n_sessions, 1),
+                }
+            )
 
         logger.info(f"Discovered {len(events)} testing event(s) for {self.year}")
         for e in events:
@@ -678,19 +685,42 @@ class PreSeasonExtractor:
             return {
                 k: []
                 for k in (
-                    "time", "lap", "compound", "stint",
-                    "s1", "s2", "s3", "life", "pos", "status", "pb",
-                    "sesT", "drv", "dNum", "pout", "pin",
-                    "s1T", "s2T", "s3T", "vi1", "vi2",
-                    "vfl", "vst", "fresh", "team", "lST",
-                    "lSD", "del", "delR", "ff1G", "iacc",
+                    "time",
+                    "lap",
+                    "compound",
+                    "stint",
+                    "s1",
+                    "s2",
+                    "s3",
+                    "life",
+                    "pos",
+                    "status",
+                    "pb",
+                    "sesT",
+                    "drv",
+                    "dNum",
+                    "pout",
+                    "pin",
+                    "s1T",
+                    "s2T",
+                    "s3T",
+                    "vi1",
+                    "vi2",
+                    "vfl",
+                    "vst",
+                    "fresh",
+                    "team",
+                    "lST",
+                    "lSD",
+                    "del",
+                    "delR",
+                    "ff1G",
+                    "iacc",
                     *LAP_WEATHER_KEYS,
                 )
             }
 
-    def get_circuit_info(
-        self, test_number: int, session_number: int
-    ) -> Optional[Dict]:
+    def get_circuit_info(self, test_number: int, session_number: int) -> Optional[Dict]:
         cache_key = f"{self.year}-T{test_number}-S{session_number}"
         if cache_key in self._circuit_cache:
             return self._circuit_cache[cache_key]
@@ -708,7 +738,9 @@ class PreSeasonExtractor:
                     "Y": _series_to_json_list(corners["Y"]),
                     "Angle": _series_to_json_list(corners["Angle"]),
                     "Distance": _series_to_json_list(corners["Distance"]),
-                    "Rotation": _scalar_to_json_primitive_or_none(circuit_info.rotation),
+                    "Rotation": _scalar_to_json_primitive_or_none(
+                        circuit_info.rotation
+                    ),
                 }
                 self._circuit_cache[cache_key] = result
                 return result
@@ -791,9 +823,7 @@ class PreSeasonExtractor:
                 return False
 
             telemetry = selected.get_telemetry()
-            data_key = (
-                f"{self.year}-PreSeasonTesting-Practice {session_number}-{driver}-{lap_number}"
-            )
+            data_key = f"{self.year}-PreSeasonTesting{test_number}-Practice {session_number}-{driver}-{lap_number}"
             tel_data = _process_telemetry_to_dict(telemetry, data_key)
             _write_json(file_path, tel_data)
             return True
@@ -824,15 +854,15 @@ class PreSeasonExtractor:
                 LapNumber=driver_laps["LapNumber"].astype(int)
             )
 
-            laptimes = self.laps_data(driver, f1session, driver_laps, session_weather_df)
+            laptimes = self.laps_data(
+                driver, f1session, driver_laps, session_weather_df
+            )
             _write_json(f"{driver_dir}/laptimes.json", laptimes)
 
             lap_numbers = driver_laps["LapNumber"].tolist()
 
             existing = (
-                set(os.listdir(driver_dir))
-                if os.path.isdir(driver_dir)
-                else set()
+                set(os.listdir(driver_dir)) if os.path.isdir(driver_dir) else set()
             )
 
             for lap_number in lap_numbers:
@@ -840,24 +870,23 @@ class PreSeasonExtractor:
                 if fname in existing:
                     continue
                 self._process_single_lap(
-                    driver, lap_number, driver_dir, driver_laps,
-                    test_number, session_number,
+                    driver,
+                    lap_number,
+                    driver_dir,
+                    driver_laps,
+                    test_number,
+                    session_number,
                 )
 
         except Exception as e:
             logger.error(f"Error processing driver {driver}: {e}")
 
-    def process_testing_session(
-        self, test_number: int, session_number: int
-    ) -> None:
+    def process_testing_session(self, test_number: int, session_number: int) -> None:
         label = f"Test {test_number} - Practice {session_number}"
         logger.info(f"Processing {label}")
 
-        # specific requirement: /Pre-Season Testing/Practice {N}
-        # User requested to remove year from the start of base_dir
-        base_dir = (
-            f"Pre-Season Testing/Practice {session_number}"
-        )
+        # e.g. /Pre-Season Testing 1/Practice 1, /Pre-Season Testing 2/Practice 1
+        base_dir = f"Pre-Season Testing {test_number}/Practice {session_number}"
         os.makedirs(base_dir, exist_ok=True)
 
         try:
@@ -901,10 +930,13 @@ class PreSeasonExtractor:
             for i, driver in enumerate(drivers, 1):
                 logger.info(f"Processing driver {driver} ({i}/{total_drivers})")
                 self.process_driver(
-                    test_number, session_number, driver, base_dir, f1session,
+                    test_number,
+                    session_number,
+                    driver,
+                    base_dir,
+                    f1session,
                     session_weather_df,
                 )
-
 
         except Exception as e:
             logger.error(f"Error processing {label}: {e}")
@@ -932,24 +964,23 @@ class PreSeasonExtractor:
             )
 
             for session_num in range(1, n_sessions + 1):
-                if TARGET_SESSION_NUMBER is not None and session_num != TARGET_SESSION_NUMBER:
+                if (
+                    TARGET_SESSION_NUMBER is not None
+                    and session_num != TARGET_SESSION_NUMBER
+                ):
                     continue
 
                 try:
                     self.process_testing_session(test_num, session_num)
                 except Exception as e:
-                    logger.error(
-                        f"Failed Test {test_num} Session {session_num}: {e}"
-                    )
+                    logger.error(f"Failed Test {test_num} Session {session_num}: {e}")
                 check_memory_usage(
                     session_cache=self._session_cache,
                     circuit_cache=self._circuit_cache,
                 )
 
         elapsed = time.time() - start_time
-        logger.info(
-            f"Pre-season testing extraction completed in {elapsed:.2f} seconds"
-        )
+        logger.info(f"Pre-season testing extraction completed in {elapsed:.2f} seconds")
 
 
 # ======================================================================
@@ -960,7 +991,9 @@ def is_testing_data_available(year: int) -> bool:
     try:
         # Enforce 'fastf1' backend to strictly avoid 'Day 1' session issues
         # and get the full schedule to know what to check
-        schedule = fastf1.get_event_schedule(year, include_testing=True, backend="fastf1")
+        schedule = fastf1.get_event_schedule(
+            year, include_testing=True, backend="fastf1"
+        )
         testing = schedule[schedule["EventFormat"] == "testing"]
 
         if testing.empty:
@@ -994,7 +1027,10 @@ def is_testing_data_available(year: int) -> bool:
                     # Minimal load to check for data
                     f1session.load(telemetry=False, weather=False, messages=False)
 
-                    if not f1session.laps.empty and len(f1session.laps["Driver"].unique()) > 0:
+                    if (
+                        not f1session.laps.empty
+                        and len(f1session.laps["Driver"].unique()) > 0
+                    ):
                         logger.info(
                             f"Data detected for Test {idx} Session {s_num}. "
                             "Extraction checks passed."
@@ -1053,5 +1089,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

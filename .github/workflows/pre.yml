@@ -2,8 +2,8 @@ name: pre
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: '0 16 13 2 *'
+  schedule:
+    - cron: '0 16 19 2 *'
 
 
 env:

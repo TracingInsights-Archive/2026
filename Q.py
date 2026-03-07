@@ -30,7 +30,6 @@ import requests
 DEFAULT_YEAR = 2026
 # Keep exactly one uncommented event in this list.
 TARGET_EVENT_NAMES_LIST = [
-    
     "Australian Grand Prix",
     # "Chinese Grand Prix",
     # "Japanese Grand Prix",
@@ -58,8 +57,7 @@ TARGET_EVENT_NAMES_LIST = [
 ]
 if len(TARGET_EVENT_NAMES_LIST) != 1:
     raise ValueError(
-        "Set exactly one active event in TARGET_EVENT_NAME "
-        "(comment all others)."
+        "Set exactly one active event in TARGET_EVENT_NAME (comment all others)."
     )
 TARGET_EVENT_NAME = TARGET_EVENT_NAMES_LIST[0]
 AVAILABLE_SESSIONS = [
@@ -84,8 +82,7 @@ TARGET_SESSIONS = [
 invalid_target_sessions = sorted(set(TARGET_SESSIONS) - set(AVAILABLE_SESSIONS))
 if invalid_target_sessions:
     raise ValueError(
-        "Invalid TARGET_SESSIONS value(s): "
-        + ", ".join(invalid_target_sessions)
+        "Invalid TARGET_SESSIONS value(s): " + ", ".join(invalid_target_sessions)
     )
 PROTO = "https"
 HOST = "api.multiviewer.app"
@@ -112,17 +109,19 @@ logger = logging.getLogger("session_extractor")
 logging.getLogger("fastf1").setLevel(logging.WARNING)
 logging.getLogger("fastf1").propagate = False
 
-_MISSING_TEXT_VALUES = frozenset({
-    "",
-    "null",
-    "nan",
-    "nat",
-    "none",
-    "inf",
-    "-inf",
-    "infinity",
-    "-infinity",
-})
+_MISSING_TEXT_VALUES = frozenset(
+    {
+        "",
+        "null",
+        "nan",
+        "nat",
+        "none",
+        "inf",
+        "-inf",
+        "infinity",
+        "-infinity",
+    }
+)
 _MISSING_TEXT_LIST = list(_MISSING_TEXT_VALUES)
 
 
@@ -304,7 +303,9 @@ def _session_rcm_to_column_lists(rcm_df: pd.DataFrame) -> Dict[str, list]:
     return out
 
 
-def _lap_weather_to_column_lists(laps: pd.DataFrame, weather_df: pd.DataFrame = None) -> Dict[str, list]:
+def _lap_weather_to_column_lists(
+    laps: pd.DataFrame, weather_df: pd.DataFrame = None
+) -> Dict[str, list]:
     n_laps = len(laps)
     if n_laps == 0:
         return {k: [] for k in LAP_WEATHER_KEYS}
@@ -335,6 +336,60 @@ def _lap_weather_to_column_lists(laps: pd.DataFrame, weather_df: pd.DataFrame = 
         out[short_key] = values
 
     return out
+
+
+def _qualifying_session_name(
+    session_name: Optional[str],
+) -> Optional[Tuple[str, str, str]]:
+    if not session_name:
+        return None
+
+    normalized = session_name.strip().lower()
+    if normalized == "qualifying":
+        return ("Q1", "Q2", "Q3")
+    if normalized in ("sprint qualifying", "sprint shootout"):
+        return ("SQ1", "SQ2", "SQ3")
+    return None
+
+
+def _laps_to_quali_segment(
+    driver: str,
+    driver_laps: pd.DataFrame,
+    f1session: fastf1.core.Session,
+    session_name: Optional[str],
+) -> list:
+    if driver_laps.empty:
+        return []
+
+    quali_segments = _qualifying_session_name(session_name)
+    if quali_segments is None:
+        return ["None"] * len(driver_laps)
+
+    try:
+        split_laps = f1session.laps.split_qualifying_sessions()
+    except Exception as exc:
+        logger.warning(
+            "Could not split qualifying sessions for %s in %s: %s",
+            driver,
+            session_name,
+            exc,
+        )
+        return ["None"] * len(driver_laps)
+
+    lap_to_segment = {}
+    for session_laps, segment_name in zip(split_laps, quali_segments):
+        if session_laps is None or session_laps.empty:
+            continue
+        session_driver_laps = session_laps.pick_drivers(driver)
+        if session_driver_laps.empty:
+            continue
+        for lap_num in session_driver_laps["LapNumber"].tolist():
+            lap_to_segment[lap_num] = segment_name
+
+    return [
+        lap_to_segment.get(lap_num, "None")
+        for lap_num in driver_laps["LapNumber"].tolist()
+    ]
 
 
 def _array_to_list_float_or_none(arr: np.ndarray) -> list:
@@ -576,9 +631,7 @@ class SeasonSessionExtractor:
             ]
             return {"drivers": drivers}
         except Exception as e:
-            logger.error(
-                f"Error getting drivers for {event_name} {session_name}: {e}"
-            )
+            logger.error(f"Error getting drivers for {event_name} {session_name}: {e}")
             return {"drivers": []}
 
     def _build_driver_info(
@@ -637,12 +690,18 @@ class SeasonSessionExtractor:
         f1session: fastf1.core.Session,
         driver_laps: pd.DataFrame = None,
         session_weather_df: pd.DataFrame = None,
+        session_name: Optional[str] = None,
     ) -> Dict[str, list]:
         try:
             if driver_laps is None:
                 driver_laps = f1session.laps.pick_drivers(driver)
 
+            session_name = getattr(f1session, "name", None) or session_name
+
             lap_weather = _lap_weather_to_column_lists(driver_laps, session_weather_df)
+            quali_segments = _laps_to_quali_segment(
+                driver, driver_laps, f1session, session_name
+            )
 
             return {
                 "time": _td_col_to_seconds(driver_laps["LapTime"]),
@@ -676,6 +735,7 @@ class SeasonSessionExtractor:
                 "delR": _col_to_list_str_or_none(driver_laps["DeletedReason"]),
                 "ff1G": _col_to_list_bool_or_none(driver_laps["FastF1Generated"]),
                 "iacc": _col_to_list_bool_or_none(driver_laps["IsAccurate"]),
+                "qs": quali_segments,
                 **lap_weather,
             }
         except Exception as e:
@@ -683,19 +743,43 @@ class SeasonSessionExtractor:
             return {
                 k: []
                 for k in (
-                    "time", "lap", "compound", "stint",
-                    "s1", "s2", "s3", "life", "pos", "status", "pb",
-                    "sesT", "drv", "dNum", "pout", "pin",
-                    "s1T", "s2T", "s3T", "vi1", "vi2",
-                    "vfl", "vst", "fresh", "team", "lST",
-                    "lSD", "del", "delR", "ff1G", "iacc",
+                    "time",
+                    "lap",
+                    "compound",
+                    "stint",
+                    "s1",
+                    "s2",
+                    "s3",
+                    "life",
+                    "pos",
+                    "status",
+                    "pb",
+                    "sesT",
+                    "drv",
+                    "dNum",
+                    "pout",
+                    "pin",
+                    "s1T",
+                    "s2T",
+                    "s3T",
+                    "vi1",
+                    "vi2",
+                    "vfl",
+                    "vst",
+                    "fresh",
+                    "team",
+                    "lST",
+                    "lSD",
+                    "del",
+                    "delR",
+                    "ff1G",
+                    "iacc",
+                    "qs",
                     *LAP_WEATHER_KEYS,
                 )
             }
 
-    def get_circuit_info(
-        self, event_name: str, session_name: str
-    ) -> Optional[Dict]:
+    def get_circuit_info(self, event_name: str, session_name: str) -> Optional[Dict]:
         cache_key = f"{self.year}-{event_name}-{session_name}"
         if cache_key in self._circuit_cache:
             return self._circuit_cache[cache_key]
@@ -713,7 +797,9 @@ class SeasonSessionExtractor:
                     "Y": _series_to_json_list(corners["Y"]),
                     "Angle": _series_to_json_list(corners["Angle"]),
                     "Distance": _series_to_json_list(corners["Distance"]),
-                    "Rotation": _scalar_to_json_primitive_or_none(circuit_info.rotation),
+                    "Rotation": _scalar_to_json_primitive_or_none(
+                        circuit_info.rotation
+                    ),
                 }
                 self._circuit_cache[cache_key] = result
                 return result
@@ -731,9 +817,7 @@ class SeasonSessionExtractor:
                     self._circuit_cache[cache_key] = result
                     return result
 
-            logger.warning(
-                f"Could not get corner data for {event_name} {session_name}"
-            )
+            logger.warning(f"Could not get corner data for {event_name} {session_name}")
             return None
         except Exception as e:
             logger.error(
@@ -826,15 +910,15 @@ class SeasonSessionExtractor:
                 LapNumber=driver_laps["LapNumber"].astype(int)
             )
 
-            laptimes = self.laps_data(driver, f1session, driver_laps, session_weather_df)
+            laptimes = self.laps_data(
+                driver, f1session, driver_laps, session_weather_df, session_name
+            )
             _write_json(f"{driver_dir}/laptimes.json", laptimes)
 
             lap_numbers = driver_laps["LapNumber"].tolist()
 
             existing = (
-                set(os.listdir(driver_dir))
-                if os.path.isdir(driver_dir)
-                else set()
+                set(os.listdir(driver_dir)) if os.path.isdir(driver_dir) else set()
             )
 
             for lap_number in lap_numbers:
@@ -842,7 +926,12 @@ class SeasonSessionExtractor:
                 if fname in existing:
                     continue
                 self._process_single_lap(
-                    driver, lap_number, driver_dir, driver_laps, event_name, session_name
+                    driver,
+                    lap_number,
+                    driver_dir,
+                    driver_laps,
+                    event_name,
+                    session_name,
                 )
 
         except Exception as e:
@@ -934,8 +1023,6 @@ class SeasonSessionExtractor:
 # ======================================================================
 
 
-
-
 def is_session_data_available(
     year: int,
     events: Optional[List[str]] = None,
@@ -957,8 +1044,11 @@ def is_session_data_available(
 
         logger.info(f"Checking data availability for {year} {event} {session}...")
 
-        f1session = fastf1.get_session(year, event, session)
-        f1session.load(telemetry=False, weather=False, messages=False)
+        logger.info("FastF1 cache disabled for availability check")
+        with fastf1.Cache.disabled():
+            f1session = fastf1.get_session(year, event, session)
+            f1session.load(telemetry=False, weather=False, messages=False)
+        logger.info("FastF1 cache state restored after availability check")
 
         if f1session.laps.empty:
             logger.info(f"No lap data available yet for {year} {event} {session}")
@@ -986,6 +1076,7 @@ def main():
 
         os.makedirs("cache", exist_ok=True)
         fastf1.Cache.enable_cache("cache")
+        logger.info("FastF1 cache enabled at cache")
 
         extractor = SeasonSessionExtractor(year=year)
         max_attempts = 720

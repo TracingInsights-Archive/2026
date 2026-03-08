@@ -1,4 +1,4 @@
-name: FP1
+name: cor
 
 on:
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Run Telemetry Extraction
-        run: python FP1.py
+        run: python corner.py
         env:
           GITHUB_ACTIONS: "true"
 
@@ -73,4 +73,5 @@ jobs:
         env:
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 

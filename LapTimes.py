@@ -566,13 +566,16 @@ class ErgastClient:
                 break
 
             for lap in races[0].get("Laps", []):
-                lap_number = lap.get("number")
+                lap_number = _coerce_int(lap.get("number"))
+                if lap_number is None:
+                    continue
                 for timing in lap.get("Timings", []):
+                    position = _coerce_int(timing.get("position"))
                     all_laps_data.append(
                         {
-                            "LapNumber": int(lap_number),
+                            "LapNumber": lap_number,
                             "driverId": timing.get("driverId"),
-                            "position": int(timing.get("position")),
+                            "position": position,
                             "time": timing.get("time"),
                         }
                     )

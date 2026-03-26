@@ -31,8 +31,8 @@ DEFAULT_YEAR = 2026
 # Keep exactly one uncommented event in this list.
 TARGET_EVENT_NAMES_LIST = [
     # "Australian Grand Prix",
-    "Chinese Grand Prix",
-    # "Japanese Grand Prix",
+    # "Chinese Grand Prix",
+    "Japanese Grand Prix",
     # "Bahrain Grand Prix",
     # "Saudi Arabian Grand Prix",
     # "Miami Grand Prix",

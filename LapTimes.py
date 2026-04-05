@@ -59,11 +59,9 @@ TARGET_EVENT_NAMES_LIST = [
     # "Qatar Grand Prix",
     # "Abu Dhabi Grand Prix",
 ]
-if len(TARGET_EVENT_NAMES_LIST) != 1:
-    raise ValueError(
-        "Set exactly one active event in TARGET_EVENT_NAME (comment all others)."
-    )
-TARGET_EVENT_NAME = TARGET_EVENT_NAMES_LIST[0]
+TARGET_EVENT_NAMES = [e.strip() for e in TARGET_EVENT_NAMES_LIST if e.strip()]
+if not TARGET_EVENT_NAMES:
+    raise ValueError("Set at least one active event in TARGET_EVENT_NAMES_LIST.")
 AVAILABLE_SESSIONS = [
     "Practice 1",
     "Practice 2",
@@ -75,10 +73,10 @@ AVAILABLE_SESSIONS = [
 ]
 # Select one or more sessions from AVAILABLE_SESSIONS.
 TARGET_SESSIONS = [
-    # "Practice 1",
+    "Practice 1",
     # "Practice 2",
     # "Practice 3",
-    # "Qualifying",
+    "Qualifying",
     # "Sprint Qualifying",
     # "Sprint",
     "Race",
@@ -1137,9 +1135,8 @@ class SeasonSessionExtractor:
         logger.info("Starting laptimes extraction for %d", self.year)
         start_time = time.time()
 
-        event_name = TARGET_EVENT_NAME.strip() if TARGET_EVENT_NAME else ""
-        if not event_name:
-            logger.warning("No TARGET_EVENT_NAME configured — nothing to extract.")
+        if not TARGET_EVENT_NAMES:
+            logger.warning("No TARGET_EVENT_NAMES configured — nothing to extract.")
             return
 
         sessions = [s for s in TARGET_SESSIONS if isinstance(s, str) and s.strip()]
@@ -1147,13 +1144,14 @@ class SeasonSessionExtractor:
             logger.warning("No TARGET_SESSIONS configured — nothing to extract.")
             return
 
-        logger.info("Processing %s (%s)", event_name, ", ".join(sessions))
-        for session_name in sessions:
-            try:
-                self.process_event_session(event_name, session_name)
-            except Exception as e:
-                logger.error("Failed %s %s: %s", event_name, session_name, e)
-            check_memory_usage(session_cache=self._session_cache)
+        for event_name in TARGET_EVENT_NAMES:
+            logger.info("Processing %s (%s)", event_name, ", ".join(sessions))
+            for session_name in sessions:
+                try:
+                    self.process_event_session(event_name, session_name)
+                except Exception as e:
+                    logger.error("Failed %s %s: %s", event_name, session_name, e)
+                check_memory_usage(session_cache=self._session_cache)
 
         elapsed = time.time() - start_time
         logger.info("Laptimes extraction completed in %.2f seconds", elapsed)
@@ -1172,7 +1170,7 @@ def is_session_data_available(
     """Check if data is available for the first specified event/session pair."""
     try:
         if events is None:
-            events = [TARGET_EVENT_NAME] if TARGET_EVENT_NAME else []
+            events = list(TARGET_EVENT_NAMES)
         if sessions is None:
             sessions = list(TARGET_SESSIONS)
 

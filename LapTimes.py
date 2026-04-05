@@ -34,8 +34,8 @@ import requests
 DEFAULT_YEAR = 2026
 # Keep exactly one uncommented event in this list.
 TARGET_EVENT_NAMES_LIST = [
-    # "Australian Grand Prix",
-    # "Chinese Grand Prix",
+    "Australian Grand Prix",
+    "Chinese Grand Prix",
     "Japanese Grand Prix",
     # "Bahrain Grand Prix",
     # "Saudi Arabian Grand Prix",
@@ -738,7 +738,7 @@ class SeasonSessionExtractor:
         driver: str,
     ) -> Dict[int, Any]:
         """
-        Returns {lap_number: LapTime_timedelta} for a driver from Ergast.
+        Returns {lap_number: {"LapTime": timedelta, "position": int}} for a driver from Ergast.
         Result is empty dict if not a Race session or data unavailable.
         """
         cache_key = f"{self.year}-{event_name}-Race"
@@ -770,7 +770,10 @@ class SeasonSessionExtractor:
 
         driver_rows = all_laps_df[all_laps_df["driverId"] == driver_id]
         return {
-            int(row["LapNumber"]): row["LapTime_Ergast"]
+            int(row["LapNumber"]): {
+                "LapTime": row["LapTime_Ergast"],
+                "position": row.get("position"),
+            }
             for _, row in driver_rows.iterrows()
         }
 
@@ -925,11 +928,56 @@ class SeasonSessionExtractor:
                 )
                 if ergast_map:
                     driver_laps = driver_laps.copy()
+                    ergast_lt_map = {k: v["LapTime"] for k, v in ergast_map.items()}
+                    ergast_pos_map = {
+                        k: v["position"]
+                        for k, v in ergast_map.items()
+                        if v.get("position") is not None
+                    }
                     driver_laps["LapTime"] = (
                         driver_laps["LapNumber"]
-                        .map(ergast_map)
+                        .map(ergast_lt_map)
                         .fillna(driver_laps["LapTime"])
                     )
+                    if ergast_pos_map:
+                        driver_laps["Position"] = (
+                            driver_laps["LapNumber"]
+                            .map(ergast_pos_map)
+                            .fillna(driver_laps["Position"])
+                        )
+
+                    # Insert rows for laps Ergast has but FastF1 dropped
+                    # (e.g. lap 1, laps above 2:30).
+                    existing_laps = set(driver_laps["LapNumber"].dropna().astype(int))
+                    missing_laps = sorted(set(ergast_map) - existing_laps)
+                    if missing_laps:
+                        drv_abbr = driver
+                        drv_num = None
+                        try:
+                            drv_info = f1session.get_driver(driver)
+                            drv_abbr = drv_info.get("Abbreviation", driver)
+                            drv_num = str(drv_info.get("DriverNumber", ""))
+                        except Exception:
+                            pass
+                        stub_rows = []
+                        for lap_num in missing_laps:
+                            ergast_entry = ergast_map[lap_num]
+                            stub = {col: np.nan for col in driver_laps.columns}
+                            stub["LapNumber"] = lap_num
+                            stub["LapTime"] = ergast_entry["LapTime"]
+                            pos = ergast_entry.get("position")
+                            if pos is not None:
+                                stub["Position"] = pos
+                            stub["Driver"] = drv_abbr
+                            if drv_num is not None:
+                                stub["DriverNumber"] = drv_num
+                            stub_rows.append(stub)
+                        stub_df = pd.DataFrame(stub_rows, columns=driver_laps.columns)
+                        driver_laps = (
+                            pd.concat([driver_laps, stub_df], ignore_index=True)
+                            .sort_values("LapNumber")
+                            .reset_index(drop=True)
+                        )
 
             lap_weather = _lap_weather_to_column_lists(driver_laps, session_weather_df)
             mini_sector_columns = _mini_sector_columns_from_laps(

@@ -34,12 +34,12 @@ DEFAULT_YEAR = 2026
 BASE_DIR = "."
 
 TARGET_EVENT_NAMES_LIST = [
-    "Australian Grand Prix",
-    "Chinese Grand Prix",
-    "Japanese Grand Prix",
+    # "Australian Grand Prix",
+    # "Chinese Grand Prix",
+    # "Japanese Grand Prix",
     # "Bahrain Grand Prix",
     # "Saudi Arabian Grand Prix",
-    # "Miami Grand Prix",
+    "Miami Grand Prix",
     # "Emilia Romagna Grand Prix",
     # "Monaco Grand Prix",
     # "Spanish Grand Prix",

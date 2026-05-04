@@ -34,12 +34,12 @@ import requests
 DEFAULT_YEAR = 2026
 # Keep exactly one uncommented event in this list.
 TARGET_EVENT_NAMES_LIST = [
-    "Australian Grand Prix",
-    "Chinese Grand Prix",
-    "Japanese Grand Prix",
+    # "Australian Grand Prix",
+    # "Chinese Grand Prix",
+    # "Japanese Grand Prix",
     # "Bahrain Grand Prix",
     # "Saudi Arabian Grand Prix",
-    # "Miami Grand Prix",
+    "Miami Grand Prix",
     # "Emilia Romagna Grand Prix",
     # "Monaco Grand Prix",
     # "Spanish Grand Prix",
@@ -73,13 +73,13 @@ AVAILABLE_SESSIONS = [
 ]
 # Select one or more sessions from AVAILABLE_SESSIONS.
 TARGET_SESSIONS = [
-    # "Practice 1",
-    "Practice 2",
-    "Practice 3",
-    # "Qualifying",
+    "Practice 1",
+    # "Practice 2",
+    # "Practice 3",
+    "Qualifying",
     "Sprint Qualifying",
     "Sprint",
-    # "Race",
+    "Race",
 ]
 invalid_target_sessions = sorted(set(TARGET_SESSIONS) - set(AVAILABLE_SESSIONS))
 if invalid_target_sessions:
